@@ -75,6 +75,22 @@ func ResourceObject() *schema.Resource {
 				ForceNew:     true,
 				ValidateFunc: validation.NoZeroValues,
 			},
+			"sse_customer_algorithm": {
+				Type:        schema.TypeString,
+				Description: "TODO fill this",
+				Optional:    true,
+			},
+			"sse_customer_key": {
+				Type:        schema.TypeString,
+				Description: "TODO fill this",
+				Optional:    true,
+				Sensitive:   true,
+			},
+			"sse_customer_key_md5": {
+				Type:        schema.TypeString,
+				Description: "TODO fill this",
+				Optional:    true,
+			},
 			"bucket_key_enabled": {
 				Type:     schema.TypeBool,
 				Optional: true,
@@ -264,7 +280,12 @@ func resourceObjectRead(ctx context.Context, d *schema.ResourceData, meta interf
 		optFns = append(optFns, func(o *s3.Options) { o.UseARNRegion = true })
 	}
 	key := sdkv1CompatibleCleanKey(d.Get("key").(string))
-	output, err := findObjectByBucketAndKey(ctx, conn, bucket, key, "", d.Get("checksum_algorithm").(string), optFns...)
+
+	sseCustomerAlgorithm := d.Get("sse_customer_algorithm").(string)
+	sseCustomerKey := d.Get("sse_customer_key").(string)
+	sseCustomerKeyMd5 := d.Get("sse_customer_key_md5").(string)
+
+	output, err := findObjectByBucketAndKeyWithSSE(ctx, conn, bucket, key, sseCustomerAlgorithm, sseCustomerKey, sseCustomerKeyMd5, "", d.Get("checksum_algorithm").(string), optFns...)
 
 	if !d.IsNewResource() && tfresource.NotFound(err) {
 		log.Printf("[WARN] S3 Object (%s) not found, removing from state", d.Id())
@@ -509,9 +530,12 @@ func resourceObjectUpload(ctx context.Context, d *schema.ResourceData, meta inte
 	}
 
 	input := &s3.PutObjectInput{
-		Body:   body,
-		Bucket: aws.String(bucket),
-		Key:    aws.String(sdkv1CompatibleCleanKey(d.Get("key").(string))),
+		Body:                 body,
+		Bucket:               aws.String(bucket),
+		Key:                  aws.String(sdkv1CompatibleCleanKey(d.Get("key").(string))),
+		SSECustomerAlgorithm: aws.String(d.Get("sse_customer_algorithm").(string)),
+		SSECustomerKey:       aws.String(d.Get("sse_customer_key").(string)),
+		SSECustomerKeyMD5:    aws.String(d.Get("sse_customer_key_md5").(string)),
 	}
 
 	if v, ok := d.GetOk("acl"); ok {
@@ -678,6 +702,24 @@ func findObjectByBucketAndKey(ctx context.Context, conn *s3.Client, bucket, key,
 	input := &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
+	}
+	if checksumAlgorithm != "" {
+		input.ChecksumMode = types.ChecksumModeEnabled
+	}
+	if etag != "" {
+		input.IfMatch = aws.String(etag)
+	}
+
+	return findObject(ctx, conn, input, optFns...)
+}
+
+func findObjectByBucketAndKeyWithSSE(ctx context.Context, conn *s3.Client, bucket, key, sseCustomerAlgorithm, sseCustomerKey, sseCustomerKeyMd5, etag, checksumAlgorithm string, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	input := &s3.HeadObjectInput{
+		Bucket:               aws.String(bucket),
+		Key:                  aws.String(key),
+		SSECustomerAlgorithm: aws.String(sseCustomerAlgorithm),
+		SSECustomerKey:       aws.String(sseCustomerKey),
+		SSECustomerKeyMD5:    aws.String(sseCustomerKeyMd5),
 	}
 	if checksumAlgorithm != "" {
 		input.ChecksumMode = types.ChecksumModeEnabled
